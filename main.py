@@ -1,7 +1,7 @@
 import telebot
 import datetime
 import sqlite3
-
+import re
 
 class DataBase:
     def __init__(self, db_name):
@@ -74,17 +74,32 @@ class DataBase:
         ))
         sql["connect"].commit()
         self.close(sql["cursor"], sql["connect"])
+
     def insert_message(self, message: dict):
-        sql = self.connect_db()
         date = datetime.datetime.now().strftime("%Y-%m-%d")
+
+        info_user = self.check_user(message.from_user.id)
+        if not info_user['status']:
+            self.create_user()
+            info_user = self.check_user(message.from_user.id)["info_user"][0]
+        else:
+            id_user = info_user["info_user"][0]
+        sql = self.connect_db()
         sql["cursor"].execute('''
             INSERT INTO messages (
                 id_user, message_id, message_text, date_send
             ) VALUES (?, ?, ?, ?)
         ''', (
-            
+            id_user, message.message_id, message.text, date,
         ))
+        sql["connect"].commit()
+
+        id_message = sql["cursor"].lastrowid
+
         self.close(sql["cursor"], sql["connect"])
+
+        return id_message
+
     def close(self, cursor, connect):
         cursor.close()
         connect.close()
@@ -95,6 +110,7 @@ class TelegramBot(DataBase):
     def __init__(self, db_name, token):
         super().__init__(db_name)
         self.bot = telebot.TeleBot(token)
+        self.admin_chat_id = -4235251400
         self.router()
 
     def router(self):
@@ -115,10 +131,25 @@ class TelegramBot(DataBase):
 
         @self.bot.message_handler(func=lambda message: True)
         def echo_all(message):
-            self.bot.reply_to(
-                message,
-                "Сообщение отправлено администратору!"
-            )
+            if message.chat.id != self.admin_chat_id:
+                id_message = self.insert_message(message)
+                self.bot.reply_to(
+                    message,
+                    "Сообщение отправлено администратору!"
+                )
+                text = f'''
+Номер заявки №{id_message}
+ID пользователя: {message.from_user.id}
+Сообщение: {message.text}
+                '''
+                self.bot.send_message(self.admin_chat_id, text) 
+
+            elif message.chat.id == self.admin_chat_id and message.reply_to_message != None:
+                reply_message = str(message.reply_to_message.text)
+                id_application = re.search(r'Номер заявки №(\d+)', reply_message).group(1)
+                id_user = re.search(r'ID пользователя: (\d+)', reply_message).group(1)
+                message_text = reply_message.split("\n")[2].split(': ')
+                print(id_application)
         self.bot.polling()
 
 
